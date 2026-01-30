@@ -26,16 +26,9 @@ jobs:
 
       # ------------------------------------------------------------
       # Docker / Buildx setup
-      # Use docker driver so the runtime build can use the locally
-      # built build-oqs image (container driver would pull from registry).
       # ------------------------------------------------------------
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Use Docker driver builder (for local image reuse)
-        run: |
-          docker buildx create --name local-docker --driver docker --use 2>/dev/null || docker buildx use local-docker
-          docker buildx inspect --bootstrap
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -60,15 +53,16 @@ jobs:
           echo "Commit SHA: $SHORT_SHA"
 
       # ------------------------------------------------------------
-      # Build images LOCALLY (amd64 only) for security scanning
-      # Context: repo root (docker/ and scripts/ used in Dockerfiles)
+      # Build images from single multi-stage Dockerfile (no image pull)
+      # Context: repo root (docker/ and scripts/ used in Dockerfile)
       # ------------------------------------------------------------
       - name: Build cafe-crypto-backend:build-oqs image (local, amd64, for scan)
         run: |
           docker buildx build \
             --platform linux/amd64 \
+            --target build-oqs \
             --load \
-            -f docker/Dockerfile-oqs-build \
+            -f docker/Dockerfile-oqs \
             -t oleglod/cafe-crypto-backend:build-oqs \
             .
 
@@ -76,8 +70,9 @@ jobs:
         run: |
           docker buildx build \
             --platform linux/amd64 \
+            --target runtime-oqs \
             --load \
-            -f docker/Dockerfile-oqs-runtime \
+            -f docker/Dockerfile-oqs \
             -t oleglod/cafe-crypto-backend:runtime-oqs \
             .
 
@@ -116,18 +111,6 @@ jobs:
           docker push oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs
           docker push oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs
           docker push oleglod/cafe-crypto-backend:build-oqs
-
-      - name: Wait for cafe-crypto-backend:build-oqs image to be available
-        run: |
-          echo "Waiting for cafe-crypto-backend:build-oqs image to be available on Docker Hub..."
-          for i in {1..40}; do
-            if docker manifest inspect oleglod/cafe-crypto-backend:build-oqs >/dev/null 2>&1; then
-              echo "Image oleglod/cafe-crypto-backend:build-oqs is available"
-              break
-            fi
-            echo "Attempt $i/40: Image not yet available, waiting 20 seconds..."
-            sleep 20
-          done
 
       - name: Tag & publish cafe-crypto-backend:runtime-oqs image (amd64)
         run: |

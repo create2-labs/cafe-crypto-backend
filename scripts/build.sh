@@ -36,7 +36,7 @@ usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Build OQS Docker images (cafe-crypto-backend:build-oqs and cafe-crypto-backend:runtime-oqs)
+Build OQS Docker images from docker/Dockerfile-oqs (build-oqs and runtime-oqs stages)
 
 OPTIONS:
     --tag-build TAG          Tag for build image (default: cafe-crypto-backend:build-oqs)
@@ -95,13 +95,8 @@ check_docker() {
 }
 
 check_build_image() {
-    if [[ "$RUNTIME_ONLY" == true ]]; then
-        if ! docker image inspect "$BUILD_TAG" &> /dev/null; then
-            log_error "Build image '$BUILD_TAG' not found. Build it first or remove --runtime-only flag."
-            exit 1
-        fi
-        log_info "Using existing build image: $BUILD_TAG"
-    fi
+    # With single multi-stage Dockerfile, --runtime-only builds up to runtime-oqs (no pre-built image required).
+    :
 }
 
 build_build_image() {
@@ -113,7 +108,7 @@ build_build_image() {
     log_info "Building build image: $BUILD_TAG"
 
     # Build docker command (context = SRCDIR)
-    local docker_cmd=("docker" "build" "-f" "$SRCDIR/docker/Dockerfile-oqs-build" "-t" "$BUILD_TAG")
+    local docker_cmd=("docker" "build" "--target" "build-oqs" "-f" "$SRCDIR/docker/Dockerfile-oqs" "-t" "$BUILD_TAG")
     
     if [[ "$NO_CACHE" == true ]]; then
         docker_cmd+=("--no-cache")
@@ -138,48 +133,24 @@ build_runtime_image() {
         return 0
     fi
 
-    log_info "Building runtime image: $RUNTIME_TAG"
-    log_info "Using build image: $BUILD_TAG"
-    
-    # Check if custom tags are used
-    if [[ "$BUILD_TAG" != "cafe-crypto-backend:build-oqs" ]]; then
-        log_warning "Custom build tag detected: $BUILD_TAG"
-        log_warning "Dockerfile-oqs-runtime uses 'cafe-crypto-backend:build-oqs' by default."
-        log_warning "Temporarily modifying Dockerfile to use custom tag..."
-        
-        # Create temporary Dockerfile with custom tag
-        local temp_dockerfile="$SRCDIR/docker/Dockerfile-oqs-runtime.tmp"
-        sed "s|FROM cafe-crypto-backend:build-oqs AS source|FROM $BUILD_TAG AS source|" \
-            "$SRCDIR/docker/Dockerfile-oqs-runtime" > "$temp_dockerfile"
-        
-        local dockerfile_to_use="$temp_dockerfile"
-    else
-        local dockerfile_to_use="$SRCDIR/docker/Dockerfile-oqs-runtime"
-    fi
-    
-    # Build docker command (context = SRCDIR)
-    local docker_cmd=("docker" "build" "-f" "$dockerfile_to_use" "-t" "$RUNTIME_TAG")
-    
+    log_info "Building runtime image: $RUNTIME_TAG (from Dockerfile-oqs stage runtime-oqs)"
+
+    local docker_cmd=("docker" "build" "--target" "runtime-oqs" "-f" "$SRCDIR/docker/Dockerfile-oqs" "-t" "$RUNTIME_TAG")
+
     if [[ "$NO_CACHE" == true ]]; then
         docker_cmd+=("--no-cache")
     fi
     if [[ "$VERBOSE" == true ]]; then
         docker_cmd+=("--progress=plain")
     fi
-    
+
     docker_cmd+=("$SRCDIR")
 
     if "${docker_cmd[@]}"; then
         log_success "Runtime image created: $RUNTIME_TAG"
     else
         log_error "Failed to build runtime image"
-        [[ -n "${temp_dockerfile:-}" && -f "$temp_dockerfile" ]] && rm -f "$temp_dockerfile"
         exit 1
-    fi
-    
-    # Cleanup temporary Dockerfile (only when we created one)
-    if [[ "$BUILD_TAG" != "cafe-crypto-backend:build-oqs" ]]; then
-        [[ -f "$temp_dockerfile" ]] && rm -f "$temp_dockerfile"
     fi
 }
 

@@ -29,7 +29,7 @@ The **OQS** stack (current use case) consists of two Docker images:
 - Used as a build stage in multi-stage Docker builds
 - Provides the compiled binaries for the runtime image
 
-**Dockerfile**: `Dockerfile-oqs-build`
+**Dockerfile**: `docker/Dockerfile-oqs` (stage `build-oqs`)
 
 ### `cafe-crypto-backend:runtime-oqs`
 
@@ -56,7 +56,7 @@ Or use the provided `openssl-wrapper` script which auto-detects the architecture
 
 **Default Command**: `openssl version`
 
-**Dockerfile**: `Dockerfile-oqs-runtime`
+**Dockerfile**: `docker/Dockerfile-oqs` (stage `runtime-oqs`)
 
 ## Building the Images
 
@@ -73,20 +73,20 @@ Use the provided build script:
 ./build.sh
 ```
 
-This will build both images in the correct order (run from repo root):
-1. First builds `oleglod/cafe-crypto-backend:build-oqs`
-2. Then builds `oleglod/cafe-crypto-backend:runtime-oqs` (which depends on the build image)
+This will build both images from the single multi-stage `docker/Dockerfile-oqs` (run from repo root):
+1. Build image: `oleglod/cafe-crypto-backend:build-oqs` (stage `build-oqs`)
+2. Runtime image: `oleglod/cafe-crypto-backend:runtime-oqs` (stage `runtime-oqs`)
 
 ### Manual Build
 
-If you prefer to build manually:
+If you prefer to build manually (single Dockerfile, no image pull):
 
 ```bash
-# From repo root: build the build image first
-docker build -f docker/Dockerfile-oqs-build -t oleglod/cafe-crypto-backend:build-oqs .
+# From repo root: build the build image
+docker build --target build-oqs -f docker/Dockerfile-oqs -t oleglod/cafe-crypto-backend:build-oqs .
 
-# Build the runtime image (depends on build image)
-docker build -f docker/Dockerfile-oqs-runtime -t oleglod/cafe-crypto-backend:runtime-oqs .
+# Build the runtime image (same Dockerfile, different stage)
+docker build --target runtime-oqs -f docker/Dockerfile-oqs -t oleglod/cafe-crypto-backend:runtime-oqs .
 ```
 
 ### Build Options
@@ -130,14 +130,16 @@ To build images for multiple architectures, use `docker buildx build` with the `
 # Build for both amd64 and arm64 (from repo root)
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f docker/Dockerfile-oqs-build \
+  --target build-oqs \
+  -f docker/Dockerfile-oqs \
   -t oleglod/cafe-crypto-backend:build-oqs \
   --load .
 
 # Build runtime image for multiple architectures
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f docker/Dockerfile-oqs-runtime \
+  --target runtime-oqs \
+  -f docker/Dockerfile-oqs \
   -t oleglod/cafe-crypto-backend:runtime-oqs \
   --load .
 ```
@@ -152,13 +154,15 @@ To create a multi-architecture manifest that works across platforms:
 # Build and push for multiple platforms
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f docker/Dockerfile-oqs-build \
+  --target build-oqs \
+  -f docker/Dockerfile-oqs \
   -t your-registry/cafe-crypto-backend:build-oqs \
   --push .
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f docker/Dockerfile-oqs-runtime \
+  --target runtime-oqs \
+  -f docker/Dockerfile-oqs \
   -t your-registry/cafe-crypto-backend:runtime-oqs \
   --push .
 ```
@@ -320,8 +324,7 @@ docker run --rm oleglod/cafe-crypto-backend:runtime-oqs cat /etc/ssl/openssl.cnf
 
 ## Files
 
-- `docker/Dockerfile-oqs-build` - Build image definition
-- `docker/Dockerfile-oqs-runtime` - Runtime image definition
+- `docker/Dockerfile-oqs` - Multi-stage Dockerfile (stages: `build-oqs`, `runtime-oqs`)
 - `scripts/install_oqs_openssl_build.sh` - Installation script for build image
 - `scripts/build.sh` - Build script (run from repo root)
 - `README.md` - This file
