@@ -1,0 +1,79 @@
+# =============================================================================
+# Multi-stage Dockerfile for OQS (liboqs + oqs-provider) build and runtime.
+# Build either stage with: docker buildx build --target <stage> -f docker/Dockerfile-oqs .
+#   build-oqs:   toolchain image (liboqs + OpenSSL provider)
+#   runtime-oqs: minimal runtime image for production (no compiler/build tools)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Stage: build-oqs — toolchain (liboqs + oqs-provider, no image pull)
+# -----------------------------------------------------------------------------
+FROM debian:trixie AS build-oqs
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build git pkg-config \
+    libssl-dev wget perl ca-certificates zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/install_oqs_openssl_build.sh /root/install.sh
+RUN chmod +x /root/install.sh && /root/install.sh
+
+RUN ARCH=$(dpkg-architecture -q DEB_HOST_GNU_TYPE 2>/dev/null || \
+    (ARCH_UNAME=$(uname -m); \
+     case "$ARCH_UNAME" in \
+       x86_64) echo "x86_64-linux-gnu" ;; \
+       aarch64|arm64) echo "aarch64-linux-gnu" ;; \
+       *) echo "x86_64-linux-gnu" ;; \
+     esac)) && \
+    echo "export OPENSSL_MODULES=/usr/lib/$ARCH/ossl-modules" >> /etc/profile.d/openssl-oqs.sh && \
+    chmod +x /etc/profile.d/openssl-oqs.sh
+
+COPY scripts/openssl-wrapper.sh /usr/local/bin/openssl-wrapper
+RUN chmod +x /usr/local/bin/openssl-wrapper
+
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
+ENV LD_LIBRARY_PATH=/opt/liboqs/lib
+
+# -----------------------------------------------------------------------------
+# Stage: runtime-oqs — minimal runtime (COPY from build-oqs, no FROM image pull)
+# -----------------------------------------------------------------------------
+FROM debian:trixie-slim AS runtime-oqs
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libz1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build-oqs /usr/bin/openssl /usr/bin/openssl
+COPY --from=build-oqs /usr/lib/*/libssl.so* /usr/lib/
+COPY --from=build-oqs /usr/lib/*/libcrypto.so* /usr/lib/
+COPY --from=build-oqs /opt/liboqs/lib /opt/liboqs/lib
+COPY --from=build-oqs /etc/ssl/openssl.cnf /etc/ssl/openssl.cnf
+
+COPY scripts/openssl-wrapper.sh /usr/local/bin/openssl-wrapper
+RUN chmod +x /usr/local/bin/openssl-wrapper
+
+# Copy ossl-modules: bring build stage lib tree and copy arch-specific modules
+COPY --from=build-oqs /usr/lib/ /tmp/usrlib/
+RUN ARCH=$(dpkg-architecture -q DEB_HOST_GNU_TYPE 2>/dev/null || \
+    (ARCH_UNAME=$(uname -m); \
+     case "$ARCH_UNAME" in \
+       x86_64) echo "x86_64-linux-gnu" ;; \
+       aarch64|arm64) echo "aarch64-linux-gnu" ;; \
+       *) echo "x86_64-linux-gnu" ;; \
+     esac)) && \
+    mkdir -p /usr/lib/$ARCH/ossl-modules && \
+    cp -r /tmp/usrlib/$ARCH/ossl-modules/. /usr/lib/$ARCH/ossl-modules/ && \
+    echo "export OPENSSL_MODULES=/usr/lib/$ARCH/ossl-modules" > /etc/profile.d/openssl-oqs.sh && \
+    chmod +x /etc/profile.d/openssl-oqs.sh && \
+    rm -rf /tmp/usrlib
+
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
+ENV LD_LIBRARY_PATH=/opt/liboqs/lib
+ENV OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules
+
+ENTRYPOINT ["/usr/local/bin/openssl-wrapper"]
+CMD ["version"]
