@@ -1,0 +1,131 @@
+name: Docker Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_BUILDKIT: "1"
+
+jobs:
+  build-scan-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ------------------------------------------------------------
+      # Docker / Buildx setup
+      # ------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ------------------------------------------------------------
+      # Version extraction
+      # ------------------------------------------------------------
+      - name: Extract version from Git tag
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          echo "full_version=$TAG" >> $GITHUB_OUTPUT
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          echo "Release version: $TAG"
+          echo "Commit SHA: $SHORT_SHA"
+
+      # ------------------------------------------------------------
+      # Build images LOCALLY (amd64 only) for security scanning
+      # Context: repo root (docker/ and scripts/ used in Dockerfiles)
+      # ------------------------------------------------------------
+      - name: Build cafe-crypto-backend:build-oqs image (local, amd64, for scan)
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            -f docker/Dockerfile-oqs-build \
+            -t oleglod/cafe-crypto-backend:build-oqs \
+            .
+
+      - name: Build cafe-crypto-backend:runtime-oqs image (local, amd64, for scan)
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --load \
+            -f docker/Dockerfile-oqs-runtime \
+            -t oleglod/cafe-crypto-backend:runtime-oqs \
+            .
+
+      # ------------------------------------------------------------
+      # Docker Scout installation
+      # ------------------------------------------------------------
+      - name: Install Docker Scout CLI
+        run: |
+          mkdir -p ~/.docker/cli-plugins
+          curl -fsSL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh
+          echo "$HOME/.docker/cli-plugins" >> $GITHUB_PATH
+          docker scout version
+
+      # ------------------------------------------------------------
+      # Security scan (NON-BLOCKING - for information only)
+      # ------------------------------------------------------------
+      - name: Scan cafe-crypto-backend:build-oqs image with Docker Scout
+        continue-on-error: true
+        run: |
+          docker scout cves oleglod/cafe-crypto-backend:build-oqs \
+            --only-severity critical,high
+
+      - name: Scan cafe-crypto-backend:runtime-oqs image with Docker Scout
+        continue-on-error: true
+        run: |
+          docker scout cves oleglod/cafe-crypto-backend:runtime-oqs \
+            --only-severity critical,high
+
+      # ------------------------------------------------------------
+      # Tag & publish images (amd64 only)
+      # ------------------------------------------------------------
+      - name: Tag & publish cafe-crypto-backend:build-oqs image (amd64)
+        run: |
+          docker tag oleglod/cafe-crypto-backend:build-oqs oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs
+          docker tag oleglod/cafe-crypto-backend:build-oqs oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs
+          docker push oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs
+          docker push oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs
+          docker push oleglod/cafe-crypto-backend:build-oqs
+
+      - name: Wait for cafe-crypto-backend:build-oqs image to be available
+        run: |
+          echo "Waiting for cafe-crypto-backend:build-oqs image to be available on Docker Hub..."
+          for i in {1..40}; do
+            if docker manifest inspect oleglod/cafe-crypto-backend:build-oqs >/dev/null 2>&1; then
+              echo "Image oleglod/cafe-crypto-backend:build-oqs is available"
+              break
+            fi
+            echo "Attempt $i/40: Image not yet available, waiting 20 seconds..."
+            sleep 20
+          done
+
+      - name: Tag & publish cafe-crypto-backend:runtime-oqs image (amd64)
+        run: |
+          docker tag oleglod/cafe-crypto-backend:runtime-oqs oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-runtime-oqs
+          docker tag oleglod/cafe-crypto-backend:runtime-oqs oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs
+          docker push oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-runtime-oqs
+          docker push oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs
+          docker push oleglod/cafe-crypto-backend:runtime-oqs

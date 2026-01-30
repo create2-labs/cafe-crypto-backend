@@ -1,0 +1,35 @@
+FROM debian:trixie
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build git pkg-config \
+    libssl-dev wget perl ca-certificates zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/install_oqs_openssl_build.sh /root/install.sh
+RUN chmod +x /root/install.sh && /root/install.sh
+
+# Detect architecture and set OPENSSL_MODULES path
+# This works for both x86_64 and ARM64 architectures
+RUN ARCH=$(dpkg-architecture -q DEB_HOST_GNU_TYPE 2>/dev/null || \
+    (ARCH_UNAME=$(uname -m); \
+     case "$ARCH_UNAME" in \
+       x86_64) echo "x86_64-linux-gnu" ;; \
+       aarch64|arm64) echo "aarch64-linux-gnu" ;; \
+       *) echo "x86_64-linux-gnu" ;; \
+     esac)) && \
+    echo "Detected architecture: $ARCH" && \
+    echo "export OPENSSL_MODULES=/usr/lib/$ARCH/ossl-modules" >> /etc/profile.d/openssl-oqs.sh && \
+    chmod +x /etc/profile.d/openssl-oqs.sh
+
+# Copy openssl wrapper script for runtime architecture detection (fallback)
+COPY scripts/openssl-wrapper.sh /usr/local/bin/openssl-wrapper
+RUN chmod +x /usr/local/bin/openssl-wrapper
+
+# Set environment variables for OpenSSL with OQS provider
+# These are required for all containers using this image
+# OPENSSL_MODULES will be set by /etc/profile.d/openssl-oqs.sh for interactive shells
+# or can be set manually: export OPENSSL_MODULES=/usr/lib/<arch>/ossl-modules
+ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
+ENV LD_LIBRARY_PATH=/opt/liboqs/lib
