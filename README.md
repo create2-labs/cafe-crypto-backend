@@ -70,10 +70,6 @@ Or use the provided `openssl-wrapper` script which auto-detects the architecture
 Use the provided build script:
 
 ```bash
-# Make the script executable (first time only)
-chmod +x build.sh
-
-# Build both images
 ./build.sh
 ```
 
