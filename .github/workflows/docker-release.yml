@@ -102,20 +102,26 @@ jobs:
             --only-severity critical,high
 
       # ------------------------------------------------------------
-      # Tag & publish images (amd64 only)
+      # Build & publish images (multi-arch: amd64, arm64)
       # ------------------------------------------------------------
-      - name: Tag & publish cafe-crypto-backend:build-oqs image (amd64)
+      - name: Build & publish cafe-crypto-backend:build-oqs image (amd64, arm64)
         run: |
-          docker tag oleglod/cafe-crypto-backend:build-oqs oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs
-          docker tag oleglod/cafe-crypto-backend:build-oqs oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs
-          docker push oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs
-          docker push oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs
-          docker push oleglod/cafe-crypto-backend:build-oqs
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --target build-oqs \
+            -f docker/Dockerfile-oqs \
+            -t oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs \
+            -t oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs \
+            -t oleglod/cafe-crypto-backend:build-oqs \
+            --push .
 
-      - name: Tag & publish cafe-crypto-backend:runtime-oqs image (amd64)
+      - name: Build & publish cafe-crypto-backend:runtime-oqs image (amd64, arm64)
         run: |
-          docker tag oleglod/cafe-crypto-backend:runtime-oqs oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-runtime-oqs
-          docker tag oleglod/cafe-crypto-backend:runtime-oqs oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs
-          docker push oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-runtime-oqs
-          docker push oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs
-          docker push oleglod/cafe-crypto-backend:runtime-oqs
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --target runtime-oqs \
+            -f docker/Dockerfile-oqs \
+            -t oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-runtime-oqs \
+            -t oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs \
+            -t oleglod/cafe-crypto-backend:runtime-oqs \
+            --push .
