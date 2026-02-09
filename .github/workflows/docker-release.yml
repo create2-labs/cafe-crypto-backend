@@ -1,3 +1,8 @@
+# Release workflow: promote RC images only (no build).
+# Expects RC images sha-<SHORT_SHA>-build-oqs and sha-<SHORT_SHA>-runtime-oqs to exist.
+# SHORT_SHA is derived from the commit pointed to by the tag (robust for annotated tags).
+# Promotion uses docker buildx imagetools create so digests stay identical.
+
 name: Docker Release
 
 on:
@@ -12,12 +17,12 @@ env:
   DOCKER_BUILDKIT: "1"
 
 jobs:
-  build-scan-publish:
+  promote:
     runs-on: ubuntu-latest
 
     steps:
       # ------------------------------------------------------------
-      # Checkout
+      # Checkout (for tag and git history)
       # ------------------------------------------------------------
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -25,7 +30,7 @@ jobs:
           fetch-depth: 0
 
       # ------------------------------------------------------------
-      # Docker / Buildx setup
+      # Docker Buildx (for imagetools)
       # ------------------------------------------------------------
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -37,91 +42,71 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # ------------------------------------------------------------
-      # Version extraction
+      # Version: from tag; SHA from commit pointed to by tag (robust for annotated tags)
       # ------------------------------------------------------------
-      - name: Extract version from Git tag
+      - name: Extract version and SHA from tag
         id: version
         run: |
           TAG=${GITHUB_REF#refs/tags/}
-          VERSION=${TAG#v}
-          SHORT_SHA=$(git rev-parse --short HEAD)
+          FULL_SHA=$(git rev-list -n 1 "$TAG")
+          SHORT_SHA=$(echo "$FULL_SHA" | cut -c1-7)
 
           echo "full_version=$TAG" >> $GITHUB_OUTPUT
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
 
           echo "Release version: $TAG"
-          echo "Commit SHA: $SHORT_SHA"
+          echo "Commit SHA (for promotion): $SHORT_SHA"
 
       # ------------------------------------------------------------
-      # Build images from single multi-stage Dockerfile (no image pull)
-      # Context: repo root (docker/ and scripts/ used in Dockerfile)
+      # Checks: existence and multi-arch for each RC image (fail before promoting)
       # ------------------------------------------------------------
-      - name: Build cafe-crypto-backend:build-oqs image (local, amd64, for scan)
+      - name: Check RC images exist and are multi-arch (build-oqs)
         run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --target build-oqs \
-            --load \
-            -f docker/Dockerfile-oqs \
-            -t oleglod/cafe-crypto-backend:build-oqs \
-            .
+          IMG="oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs"
+          if ! docker buildx imagetools inspect "$IMG" >/dev/null 2>&1; then
+            echo "::error::RC image $IMG not found. Run the RC workflow for this commit first."
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect "$IMG" | grep -q linux/amd64; then
+            echo "::error::RC image $IMG is not multi-arch (missing linux/amd64)."
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect "$IMG" | grep -q linux/arm64; then
+            echo "::error::RC image $IMG is not multi-arch (missing linux/arm64)."
+            exit 1
+          fi
+          echo "RC image $IMG exists and is multi-arch."
 
-      - name: Build cafe-crypto-backend:runtime-oqs image (local, amd64, for scan)
+      - name: Check RC images exist and are multi-arch (runtime-oqs)
         run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --target runtime-oqs \
-            --load \
-            -f docker/Dockerfile-oqs \
-            -t oleglod/cafe-crypto-backend:runtime-oqs \
-            .
-
-      # ------------------------------------------------------------
-      # Docker Scout installation
-      # ------------------------------------------------------------
-      - name: Install Docker Scout CLI
-        run: |
-          mkdir -p ~/.docker/cli-plugins
-          curl -fsSL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh | sh
-          echo "$HOME/.docker/cli-plugins" >> $GITHUB_PATH
-          docker scout version
-
-      # ------------------------------------------------------------
-      # Security scan (NON-BLOCKING - for information only)
-      # ------------------------------------------------------------
-      - name: Scan cafe-crypto-backend:build-oqs image with Docker Scout
-        continue-on-error: true
-        run: |
-          docker scout cves oleglod/cafe-crypto-backend:build-oqs \
-            --only-severity critical,high
-
-      - name: Scan cafe-crypto-backend:runtime-oqs image with Docker Scout
-        continue-on-error: true
-        run: |
-          docker scout cves oleglod/cafe-crypto-backend:runtime-oqs \
-            --only-severity critical,high
+          IMG="oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs"
+          if ! docker buildx imagetools inspect "$IMG" >/dev/null 2>&1; then
+            echo "::error::RC image $IMG not found. Run the RC workflow for this commit first."
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect "$IMG" | grep -q linux/amd64; then
+            echo "::error::RC image $IMG is not multi-arch (missing linux/amd64)."
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect "$IMG" | grep -q linux/arm64; then
+            echo "::error::RC image $IMG is not multi-arch (missing linux/arm64)."
+            exit 1
+          fi
+          echo "RC image $IMG exists and is multi-arch."
 
       # ------------------------------------------------------------
-      # Build & publish images (multi-arch: amd64, arm64)
+      # Promotion: imagetools create only (no upload, same digests)
       # ------------------------------------------------------------
-      - name: Build & publish cafe-crypto-backend:build-oqs image (amd64, arm64)
+      - name: Promote build-oqs to version and floating tag
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --target build-oqs \
-            -f docker/Dockerfile-oqs \
+          docker buildx imagetools create \
             -t oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-build-oqs \
-            -t oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs \
             -t oleglod/cafe-crypto-backend:build-oqs \
-            --push .
+            oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-build-oqs
 
-      - name: Build & publish cafe-crypto-backend:runtime-oqs image (amd64, arm64)
+      - name: Promote runtime-oqs to version and floating tag
         run: |
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --target runtime-oqs \
-            -f docker/Dockerfile-oqs \
+          docker buildx imagetools create \
             -t oleglod/cafe-crypto-backend:${{ steps.version.outputs.full_version }}-runtime-oqs \
-            -t oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs \
             -t oleglod/cafe-crypto-backend:runtime-oqs \
-            --push .
+            oleglod/cafe-crypto-backend:sha-${{ steps.version.outputs.short_sha }}-runtime-oqs
