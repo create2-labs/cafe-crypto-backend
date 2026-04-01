@@ -2,11 +2,11 @@
 
 Docker images and tooling for building and running applications with Post-Quantum Cryptography (PQC) support. **Open Quantum Safe (OQS) via OpenSSL is currently the only use case**, but the repository is designed so that other PQC libraries can be used later, and pure Go when standard library or third-party support are made easy.
 
-**Migrated from cafe-infra/oqs**; the canonical OQS images are published as `oleglod/cafe-crypto-backend:build-oqs` and `oleglod/cafe-crypto-backend:runtime-oqs`.
+The canonical OQS images are published as `oleglod/cafe-crypto-backend:build-oqs` and `oleglod/cafe-crypto-backend:runtime-oqs`.
 
 ## Overview
 
-The **OQS** stack (current use case) consists of two Docker images:
+The **OQS** stack (current use case) consists of two Docker images ([Docker hub](https://hub.docker.com/search?q=oleglod)):
 
 1. **`oleglod/cafe-crypto-backend:build-oqs`** (local: `cafe-crypto-backend:build-oqs`) - Build image containing the full build environment with liboqs and oqs-provider compiled
 2. **`oleglod/cafe-crypto-backend:runtime-oqs`** (local: `cafe-crypto-backend:runtime-oqs`) - Runtime image containing only the necessary binaries and libraries for running applications; this makes the image as small as possible
